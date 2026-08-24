@@ -1,0 +1,16 @@
+<div class="upload-section">
+  <h2>Upload Buildings</h2>
+
+  <div class="file-input">
+    <input type="file" accept=".json" (change)="onFileSelected($event)" [disabled]="uploading" />
+    <button (click)="upload()" [disabled]="!selectedFile || uploading">
+      {{ uploading ? 'Uploading...' : 'Upload' }}
+    </button>
+  </div>
+
+  <div *ngIf="error" class="status error">{{ error }}</div>
+
+  <div *ngIf="buildingsCreated !== null" class="status success">
+    Uploaded successfully: {{ buildingsCreated }} building(s) created.
+  </div>
+</div>
