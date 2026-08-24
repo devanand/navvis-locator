@@ -1,0 +1,69 @@
+= NavVis Building Locator API Guide
+:doctype: book
+:toc: left
+:toclevels: 2
+:sectlinks:
+:snippets: {snippets}
+
+== Overview
+
+This API accepts 3D building data (polygonal outlines with height ranges and floors) and determines which building and floor a given point falls within. The locate query uses a two-stage spatial filter.
+
+== Locate a point
+
+`POST /api/locate`
+
+Determines which building and floor contain the given (x, y, z) point. Three outcomes are possible: the point is on a specific floor, the point is inside a building but not on any floor, or the point is not inside any building.
+
+=== Point found on a floor
+
+include::{snippets}/locate/found/http-request.adoc[]
+include::{snippets}/locate/found/request-fields.adoc[]
+include::{snippets}/locate/found/http-response.adoc[]
+include::{snippets}/locate/found/response-fields.adoc[]
+
+=== Inside building but not on any floor
+
+A point can be inside the building envelope but between floors, or outside a floor's polygon when the floor has a smaller outline than the building (e.g. a setback).
+
+include::{snippets}/locate/building-only/http-response.adoc[]
+include::{snippets}/locate/building-only/response-fields.adoc[]
+
+=== Point not inside any building
+
+include::{snippets}/locate/not-found/http-response.adoc[]
+include::{snippets}/locate/not-found/response-fields.adoc[]
+
+== Upload building data
+
+`POST /api/buildings/upload`
+
+Uploads a JSON file containing building data. The file is parsed and persisted synchronously. Returns the number of buildings created.
+
+include::{snippets}/upload/submit/http-request.adoc[]
+include::{snippets}/upload/submit/request-parts.adoc[]
+include::{snippets}/upload/submit/http-response.adoc[]
+include::{snippets}/upload/submit/response-fields.adoc[]
+
+== Locate strategy
+
+The locate endpoint supports two spatial filtering strategies, switchable at runtime without restarting the application.
+
+- **JAVA** (default) -- height filter in the database, ray casting in the Java domain layer. Clean and testable, but does not scale beyond ~100K buildings.
+- **POSTGIS** -- `ST_Contains` with a GIST spatial index pushed entirely to PostGIS. O(log N) regardless of dataset size.
+
+=== Get current strategy
+
+`GET /api/strategy`
+
+include::{snippets}/strategy/get/http-response.adoc[]
+include::{snippets}/strategy/get/response-fields.adoc[]
+
+=== Switch strategy
+
+`PUT /api/strategy`
+
+include::{snippets}/strategy/switch/http-request.adoc[]
+include::{snippets}/strategy/switch/request-fields.adoc[]
+include::{snippets}/strategy/switch/http-response.adoc[]
+include::{snippets}/strategy/switch/response-fields.adoc[]
