@@ -1,0 +1,7 @@
+<div class="strategy-section">
+  <span class="label">Locate strategy:</span>
+  <div class="toggle" (click)="toggle()" [class.disabled]="switching">
+    <span class="option" [class.active]="current === 'JAVA'">Java</span>
+    <span class="option" [class.active]="current === 'POSTGIS'">PostGIS</span>
+  </div>
+</div>
