@@ -30,6 +30,8 @@ out/
 frontend/node_modules/
 frontend/dist/
 frontend/.angular/
+frontend/.prettierrc
+frontend/.editorconfig
 
 # Generated docs
 src/main/resources/static/docs/
