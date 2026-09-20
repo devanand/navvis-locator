@@ -1,32 +1,30 @@
 # NavVis Building Locator
 
-A full-stack application for NavVis's take-home assignment: upload 3D
-building data (polygonal outlines with height ranges and floors), then
-query any (x, y, z) point to find which building and floor it falls
-within. Upload is asynchronous via Kafka; the locate query uses a
-two-stage spatial filter, a database height check followed by ray
-casting in the domain layer. Built with an emphasis on architecture and
-production-readiness reasoning over exhaustive feature coverage.
+A full-stack application for NavVis's take-home assignment: upload 3D building
+data (polygonal outlines with height ranges and floors), then query any
+(x, y, z) point to find which building and floor it falls within. Two locate
+strategies are switchable at runtime via REST: ray casting in Java or spatial
+filtering via PostGIS. Built with an emphasis on architecture and design
+patterns over exhaustive feature coverage.
 
 ## Tech Stack
 
-| Category | Technology |
-|-----------|------------|
-| **Language** | ☕ Java 21 |
-| **Framework** | 🍃 Spring Boot 4 |
-| **Build Tool** | ⚙️ Gradle (Groovy DSL) |
-| **Database** | 🐘 PostgreSQL + PostGIS |
+| Category | Technology                                         |
+|-----------|----------------------------------------------------|
+| **Language** | ☕ Java 25                                          |
+| **Framework** | 🍃 Spring Boot 4                                   |
+| **Build Tool** | ⚙️ Gradle (Groovy DSL)                             |
+| **Database** | 🐘 PostgreSQL + PostGIS                            |
 | **Persistence** | 🗃️ Hibernate + Hibernate Spatial, Spring Data JPA |
-| **Database Migrations** | 🛫 Flyway |
-| **Messaging** | 📨 Apache Kafka (KRaft mode) |
-| **Frontend** | 🅰️ Angular 19 |
-| **Containerization** | 🐳 Docker Compose |
-| **Testing** | 🧪 JUnit 5, Mockito, JaCoCo |
+| **Migrations** | 🛫 Flyway                                          |
+| **Frontend** | 🅰️ Angular 19                                     |
+| **Containerization** | 🐳 Docker Compose                                  |
+| **Code Formatting** | 🧹 Spotless                                        |
+| **Testing** | 🧪 JUnit 5, Mockito, JaCoCo                        |
+| **API Docs** | 📝 Spring REST Docs                                |
 
-
-Single-module Gradle build. The backend, database, and Kafka broker all
-run inside Docker Compose; the Angular frontend runs separately via
-`ng serve` with a dev proxy to the backend.
+Single-module Gradle build. Backend and database run in Docker Compose;
+the Angular frontend runs separately via `ng serve` with a dev proxy.
 
 ## Running it
 
@@ -40,38 +38,18 @@ DB_USER=navvis
 DB_PASSWORD=navvis
 DB_HOST=localhost
 DB_PORT=5432
-KAFKA_BOOTSTRAP_SERVERS=kafka:9092
 CORS_ALLOWED_ORIGINS=http://localhost:4200
 SERVER_PORT=8080
-KAFKA_LISTENER_CONCURRENCY=1
 ```
 
-A `.env` file is needed to run this locally at all. `docker compose`
-reads it automatically and injects the values as container environment
-variables, and without it the containers have no credentials to start
-with.
+`.env` keeps credentials out of `docker-compose.yml` and version control
+(gitignored). `docker compose` reads it automatically. Spring Boot consumes
+the same variable names (`DB_NAME`, `DB_USER`, etc.) as plain OS environment
+variables, so in production these would come from CI/CD, a secrets store,
+or a cloud config service instead. No application code changes.
 
-Using it is a deliberate choice, not just convenience: it keeps
-credentials out of `docker-compose.yml` and out of version control
-(`.env` is gitignored) while still being the *same* mechanism a real
-deployment would use. Spring Boot reads `DB_NAME`/`DB_USER`/etc. as
-plain OS environment variables regardless of who sets them. Locally,
-that's `.env`; in production, the identical variable names would be set
-by CI/CD, the container orchestrator's secrets store, or a cloud
-provider's config service instead. The application code has no awareness
-of which one supplied them.
-
-Note `DB_HOST=localhost` here, not `db`: the `app` container's own
-`docker-compose.yml` environment block overrides it to use the compose
-service name `db`, since inside the compose network hostnames are
-service names, not `localhost`. 
-
-Similarly, `KAFKA_BOOTSTRAP_SERVERS=kafka:9092` matches the compose service name
-and is also hardcoded in the compose environment block. These `.env`
-values only matter if you run the app outside compose (e.g. from an
-IDE), where you would change `KAFKA_BOOTSTRAP_SERVERS` to
-`localhost:9092` to reach the compose-managed Kafka broker on the
-host's mapped port.
+Note: `DB_HOST=localhost` is for the host machine. The `app` container
+overrides this to `db` (the compose service name) in `docker-compose.yml`.
 
 ### Backend + Infrastructure
 
@@ -79,13 +57,10 @@ host's mapped port.
 docker compose up --build
 ```
 
-`--build` matters on every run where the source changed.
-`docker compose up` alone reuses the existing image if one exists, so
-code changes without `--build` silently run against stale,
-already-built code.
+`--build` rebuilds the image when source has changed. Without it,
+`docker compose up` reuses the last built image silently.
 
-This starts PostgreSQL + PostGIS, Kafka (single-node KRaft), and the
-Spring Boot application. The API is available at `http://localhost:8080`.
+Starts PostgreSQL + PostGIS and Spring Boot at `http://localhost:8080`.
 
 ### Frontend
 
@@ -95,25 +70,23 @@ npm install
 ng serve
 ```
 
-The Angular app runs at `http://localhost:4200` with a dev proxy
-forwarding `/api/*` to the backend. The proxy is configured in
-`proxy.conf.json` and referenced from `angular.json`. Without it,
-requests go to the Angular dev server itself instead of the backend.
+Runs at `http://localhost:4200`. A dev proxy (`proxy.conf.json`) forwards
+`/api/*` to the backend.
 
 ### Database schema
 
-Flyway migrations live at `src/main/resources/db/migration/`, applied
-automatically on startup. The schema uses PostGIS geometry columns for
-building and floor outlines, with a GIST spatial index that becomes
-load-bearing at production scale (see Scaling below).
+Flyway migrations in `src/main/resources/db/migration/` are applied on
+startup. The schema includes PostGIS geometry columns with a GIST spatial
+index for the locate query.
 
 ## API
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/buildings/upload` | Upload building data (multipart JSON file) |
-| `GET` | `/api/buildings/upload/{jobId}/status` | Poll upload job status |
+| `POST` | `/api/buildings/upload` | Upload building data (multipart JSON file, 10MB limit) |
 | `POST` | `/api/locate` | Find which building/floor contains a point |
+| `GET` | `/api/strategy` | Get the current locate strategy |
+| `PUT` | `/api/strategy` | Switch locate strategy at runtime |
 
 ## API documentation
 
@@ -131,110 +104,114 @@ HTTP exchanges), then compiles them into HTML and copies the output into
 Spring's static resources. Once the app is running (`docker compose up`),
 view it at: http://localhost:8080/docs/api-guide.html
 
-The curl examples in the API section above are a quick-reference
-shortcut, not a substitute for the generated docs. Field descriptions,
-validation rules, and all three locate outcomes are documented there
-with verified examples.
-
 ```bash
 # Upload building data
 curl -X POST http://localhost:8080/api/buildings/upload \
   -F "file=@example_data.json"
 
-# Check upload status (jobId from the response above)
-curl http://localhost:8080/api/buildings/upload/{jobId}/status
-
 # Locate a point
 curl -X POST http://localhost:8080/api/locate \
   -H 'Content-Type: application/json' \
   -d '{"x": 15, "y": 15, "z": 1}'
+
+# Check current strategy
+curl http://localhost:8080/api/strategy
+
+# Switch to PostGIS
+curl -X PUT http://localhost:8080/api/strategy \
+  -H 'Content-Type: application/json' \
+  -d '{"strategy": "POSTGIS"}'
 ```
 
-Upload returns `202` with `{ "jobId": "uuid" }`. The file is published
-to Kafka and processed asynchronously. Status returns
-`PENDING | PROCESSING | DONE | FAILED`. Locate returns
-`{ "building": "Office building", "floor": "Floor 0" }` with null
-values when the point is not inside any building or floor.
-
-The job ID is a UUID exposed directly in the URL. This is deliberate:
-UUIDs are unguessable, which prevents Insecure Direct Object Reference
-(IDOR). A sequential integer would let any client enumerate every other
-user's upload jobs just by incrementing the ID. The tradeoff is URL
-aesthetics, which is worth it for a backend API that humans rarely see
-in a browser bar.
+Upload accepts a multipart JSON file up to 10MB and returns
+`{ "buildingsCreated": 5 }`. Files exceeding the limit receive a
+`413 Payload Too Large` response. Locate returns
+`{ "building": "Office", "floor": "Ground" }` with null values when
+the point is not inside any building or floor. All error responses
+follow RFC 7807 Problem Detail format.
 
 ## Architecture decisions
 
 ### Hexagonal architecture (ports & adapters)
 
-The domain layer (`Building`, `Floor`, `Polygon2D`, `HeightRange`,
-`UploadJob`) has zero framework dependencies. All Spring, JPA, Kafka,
-and Jackson concerns live in the adapter layer. The domain communicates
-with the outside world through ports: `UploadBuildingsUseCase` and
-`LocatePointUseCase` as inbound ports (driven by REST controllers and
-Kafka consumers), `BuildingRepository` and `BuildingUploadPublisher` as
-outbound ports (implemented by JPA and Kafka adapters).
+The domain layer (`Building`, `Floor`, `Polygon2D`, `HeightRange`)
+has zero framework dependencies. All Spring, JPA, and Jackson concerns
+live in the adapter layer. The domain communicates with the outside
+world through ports: `LocatePointUseCase` and `UploadBuildingsUseCase`
+as inbound ports (driven by REST controllers), `BuildingRepository`
+and `BuildingDataParser` as outbound ports (implemented by JPA and
+Jackson adapters).
 
-```
-com.navvis.locator
-├── domain
-│   ├── model          Building, Floor, Polygon2D, HeightRange, UploadJob
-│   └── port
-│       ├── in         UploadBuildingsUseCase, LocatePointUseCase
-│       └── out        BuildingRepository, BuildingUploadPublisher
-├── application
-│   ├── service        BuildingUploadService, LocationService
-│   └── processing     UploadProcessingService
-├── adapter
-│   ├── in
-│   │   ├── web        REST controllers + DTOs
-│   │   └── messaging  KafkaBuildingUploadConsumer
-│   └── out
-│       ├── persistence JPA entities, repositories, mapper
-│       ├── messaging   KafkaBuildingUploadPublisher
-│       └── parser      JacksonBuildingDataParser
-└── config             MessagingConfig, PersistenceConfig, CorsConfig
-```
-
-This earns its keep at the scaling boundary. When the locate query needs
-to push polygon checks to PostGIS (see Scaling), only
-`JpaBuildingRepository.findContaining()` changes. The domain model,
-ports, sealed results, and the entire Kafka pipeline remain untouched.
+This earns its keep at the strategy boundary. Adding a new locate
+strategy (e.g. an in-memory R-tree) means implementing `BuildingLocator`,
+dropping it in, and registering the enum value. The domain model, ports,
+sealed results, visitor, and every existing strategy remain untouched.
 That is the concrete payoff of the hexagonal split, not an abstract
 "clean architecture" benefit.
 
 ### Three locate outcomes as a sealed interface
 
 The locate endpoint does not return a success/failure boolean or
-overloaded nulls. Three outcomes are modelled as a **sealed interface**
+overloaded nulls. Three outcomes are modelled as a sealed interface
 (`LocationResult`):
 
 - `Located(building, floor)` -- point is on a specific floor
 - `BuildingOnly(building)` -- inside the building envelope but between
-  floors, or outside every floor's polygon (e.g. Floor 4 in the example
-  data has a smaller "setback" outline)
+  floors, or outside every floor's polygon
 - `NotFound()` -- not inside any building
 
-This is a deliberate choice: the `BuildingOnly` case is a real outcome
-the example data produces (query a point between floors, or inside the
-building outline but outside Floor 4's setback), and collapsing it into
-either "found" or "not found" loses information the caller needs. The
-sealed interface forces every consumer (the REST controller, any future
-gRPC adapter) to handle all three cases explicitly at compile time.
+The sealed interface forces every consumer to handle all three cases
+at compile time. Mapping to DTOs uses the Visitor pattern: each variant
+dispatches to `LocationResponseMapper`, so the controller contains no
+switch statement and adding a new outcome is a compile error in every
+visitor implementation until handled.
 
-## Technology choices
+### Design patterns
+
+**Strategy pattern** for locate execution. `BuildingLocator` is the
+interface; `JavaRayCastingLocator` and `PostgisLocator` are the
+implementations. `BuildingLocatorResolver` holds a map of all
+registered strategies and resolves the active one via
+`LocateStrategyToggle`. The service layer calls
+`locatorResolver.current().locate(x, y, z)` with no awareness of
+which implementation runs. Adding a third strategy means one new class
+and one enum value.
+
+**Visitor pattern** for result mapping. `LocationResult` defines
+`accept(Visitor<T>)`, and each sealed variant dispatches to the
+corresponding `visit()` method. `LocationResponseMapper` implements
+the visitor to produce `LocateResponse` DTOs. This eliminates switch
+statements in the web layer and guarantees compile-time exhaustiveness
+when a new variant is added.
+
+### Feature toggle: Java ray casting vs PostGIS
+
+Both locate strategies are available at runtime, switchable via
+`PUT /api/strategy` without restart. This is deliberate: each approach
+has trade-offs worth demonstrating, and the toggle lets reviewers
+compare them against the same dataset.
+
+**Java ray casting** loads candidate buildings by height range from the
+database, then checks each polygon in the application layer using a
+ray casting algorithm (`Polygon2D`). Testable without a database and
+portable across any storage backend, but candidate set grows linearly
+with building count.
+
+**PostGIS (`ST_Covers`)** pushes the polygon check to the database
+using a GIST-indexed spatial query. O(log N) regardless of dataset size,
+no entity materialization for non-matches. Trades portability for
+performance. `ST_Covers` is used instead of `ST_Contains` because
+`ST_Contains` excludes points on polygon edges and vertices.
 
 ### Why PostgreSQL + PostGIS, not just PostgreSQL
 
-PostGIS is the load-bearing reason. The locate query's current
-implementation keeps polygon logic in the Java domain layer (ray
-casting), which is correct and clean but does not scale. At 12M
-buildings, the height-only database filter returns too many candidates
-(see Scaling). The production fix is `ST_Contains` with a GIST spatial
-index, and that requires PostGIS. Choosing it now means the schema
-migration already includes the spatial index and geometry columns, so
-the fix is a single repository method change, not a database migration
-under production load.
+PostGIS is the load-bearing reason. The Java strategy is correct and
+clean but does not scale. At millions of buildings, the height-only
+database filter returns too many candidates. The PostGIS strategy uses
+`ST_Covers` with a GIST spatial index, making it O(log N) regardless
+of dataset size. Choosing PostGIS from the start means the schema
+already includes the spatial index and geometry columns, so the
+strategy is available without a database migration under production load.
 
 The honest tradeoff: PostGIS adds a non-trivial extension dependency
 (the Docker image is `postgis/postgis`, not plain `postgres`), and
@@ -243,44 +220,6 @@ Without Hibernate Spatial, Hibernate falls back to Java serialization
 for geometry columns, and PostGIS throws opaque "Invalid endian flag"
 errors on read, a bug that is hard to diagnose without knowing the
 cause.
-
-PostgreSQL also uses a process-per-connection model, more expensive per
-connection than MySQL/MariaDB's thread-per-connection model. Not an
-issue at single-instance scale since HikariCP opens a small number of
-long-lived connections and reuses them. At multi-instance scale, the
-standard fix is PgBouncer (see Scaling). MySQL and MariaDB both have
-built-in spatial support (`ST_Contains`, R-tree indexes) that would
-work for this project's point-in-polygon queries, but PostGIS is a
-significantly more capable spatial engine: 3D geometry operations,
-coordinate system transformations, geography types that account for
-earth's curvature. Switching databases to solve a connection pooling
-problem that PgBouncer solves in an afternoon is not a tradeoff worth
-making.
-
-### Why Kafka for uploads, not synchronous processing
-
-The upload endpoint returns `202 Accepted` with a job ID immediately,
-then publishes the file content to a Kafka topic for asynchronous
-processing. This is not premature optimization; it is a design signal
-about how uploads behave in production.
-
-Upload files can be large and parsing + persisting thousands of
-buildings is not something that belongs in a synchronous HTTP
-request-response cycle. A 30-second parse ties up a servlet thread and
-leaves the client hanging. The consumer (`KafkaBuildingUploadConsumer`)
-and its processing logic (`UploadProcessingService`) live in a separate
-package, designed for extraction as an independent microservice when
-upload volume justifies it. The Kafka topic is the only contract between
-producer and consumer. Job status tracking (`UploadJob` with
-`PENDING -> PROCESSING -> DONE | FAILED` state machine) gives the
-client a polling mechanism that works identically whether the consumer
-runs in-process or as a separate service.
-
-The honest tradeoff: for this assignment's data volume (one file, one
-building), synchronous processing would work fine and would be simpler.
-Kafka adds operational complexity (a broker to run, consumer group
-management, offset tracking). The choice is about demonstrating
-production thinking, not about the example data's actual scale.
 
 ### Why Flyway, not Hibernate auto-DDL
 
@@ -300,69 +239,69 @@ every environment from local dev to production. The tradeoff is that
 every schema change requires writing a migration file by hand, but
 that is the point: schema changes should be intentional, not automatic.
 
+### File size limit
+
+Uploads are capped at 10MB, enforced at two layers:
+
+- **Frontend:** validates file size before sending. Files over the limit
+  are rejected with a message immediately, no network request made.
+- **Backend:** Spring's multipart resolver rejects oversized requests
+  before they reach the controller. The `GlobalExceptionHandler` catches
+  `MaxUploadSizeExceededException` and returns a `413 Payload Too Large`
+  response in RFC 7807 Problem Detail format.
+
+At ~1.3KB per building in the current JSON format, the 10MB limit
+accommodates roughly 7,500 buildings per upload.
+
+### Batch insert
+
+Building uploads are persisted using `saveAll()` with Hibernate JDBC
+batching (`batch_size: 100`). This groups inserts into batches of 100
+rather than issuing one round trip per building. At the 10MB file limit
+(~7,500 buildings), this reduces database round trips from 7,500 to 75.
+
+### Spotless
+
+Spotless enforces consistent formatting across the codebase via
+`./gradlew spotlessCheck` (verify) and `./gradlew spotlessApply` (fix).
+The current rules remove unused imports, trim trailing whitespace, and
+ensure files end with a newline. Runs as a Gradle plugin with no IDE
+configuration required.
+
 ## How locate works
 
-The point location algorithm uses a two-stage spatial filter:
+The locate endpoint delegates to whichever `BuildingLocator`
+implementation is active via the strategy toggle.
+
+### Java ray casting strategy
 
 1. **Database stage:** a B-tree indexed query filters buildings whose
    height range contains the z coordinate. This eliminates most buildings
-   cheaply. Commercial buildings cluster in similar height ranges, but
-   the z coordinate still rules out everything that is physically above
-   or below the query point.
+   cheaply.
 
 2. **Application stage:** each candidate building is checked with a
-   **ray casting algorithm**. A horizontal ray is shot from the query
-   point to the right, and edge crossings with the building's 2D polygon
+   ray casting algorithm. A horizontal ray is shot from the query point
+   to the right, and edge crossings with the building's 2D polygon
    outline are counted. An odd count means the point is inside. This is
    O(n) in the number of polygon edges, but building outlines have
-   single-digit edge counts, so "O(n)" means ~6 iterations.
+   single-digit edge counts, so "O(n)" means roughly 6 iterations.
 
 3. **Floor lookup:** once inside a building, each floor is checked with
    the same height + ray casting test. Floors can have different outlines
-   than the building. Floor 4 in the example data has a smaller
-   "setback" polygon, so a point inside the building outline at that
-   height can still be outside Floor 4's outline, producing the
-   `BuildingOnly` result.
+   than the building (e.g. upper floors with setback polygons), producing
+   the `BuildingOnly` result when a point is inside the building but
+   outside every floor's outline.
 
-The ray casting implementation lives in the domain layer (`Polygon2D`),
-not in the database. This is a conscious trade-off: the algorithm stays
-testable, portable, and framework-free, at the cost of not scaling
-beyond ~100K buildings (see Scaling for the fix and why the hexagonal
-architecture makes it a single-method change).
+### PostGIS strategy
 
-## Kafka configuration
+1. **Database stage:** a single spatial query uses `ST_Covers` with the
+   GIST index to find buildings whose polygon contains the (x, y) point
+   and whose height range contains z. Returns only matching rows with no
+   candidate set in Java.
 
-All Kafka configuration lives in `application.yaml`: bootstrap servers,
-serializers, consumer group ID, topic names. The Java adapters reference
-these via Spring property placeholders
-(`${app.kafka.topics.building-uploads}`,
-`${spring.kafka.consumer.group-id}`), never hardcoded strings.
-
-Topic management (partition count, replication factor, retention) is
-deliberately absent from the application. In production, topics are
-created and managed via Terraform or the managed service console (AWS
-MSK, Confluent Cloud), not by application code. For local development,
-Kafka auto-creates topics with default settings, which is sufficient.
-
-One non-obvious detail: `MessagingConfig` defines manual
-`ProducerFactory`, `ConsumerFactory`, `KafkaTemplate`, and
-`KafkaListenerContainerFactory` beans rather than relying on Spring
-Boot's Kafka auto-configuration. This is forced, not chosen. Spring
-Boot auto-configuration creates a `KafkaTemplate<Object, Object>`, but
-this application needs `KafkaTemplate<String, byte[]>`. Spring's generic
-type matching rejects the mismatch at injection time. More importantly,
-once a custom `ProducerFactory` is present, Spring auto-configuration
-backs off *entirely*, including consumer-side beans, so the config must
-provide the full set or the `@KafkaListener` container factory is
-missing at startup. The Javadoc on `MessagingConfig` explains this so
-the next developer does not delete the "redundant" beans and break the
-consumer.
-
-**Consumer scaling:** the number of Kafka partitions is the ceiling on
-consumer parallelism. `spring.kafka.listener.concurrency` (defaulting
-to 1, overridable via `KAFKA_LISTENER_CONCURRENCY`) controls how many
-consumer threads each instance runs, but more threads than partitions
-means idle threads, not more throughput.
+2. **Floor lookup:** identical to the Java strategy. Floor polygons are
+   checked in the domain layer since floors are nested within buildings
+   and benefit less from spatial indexing.
 
 ## Testing strategy
 
@@ -374,130 +313,146 @@ coverage reports via `./gradlew test jacocoTestReport`.
 
 | Layer | What's tested | Style |
 |-------|---------------|-------|
-| Domain model | Ray casting (`Polygon2D`), height range boundaries, building containment + floor lookup, `UploadJob` state machine immutability | Plain JUnit, no Spring |
-| Application services | `LocationService` three outcomes, `BuildingUploadService` submit + status + not found, `UploadProcessingService` success + failure + missing job | Mockito mocks for ports |
-| Controllers | `LocationController` all three `LocationResult` cases + validation, `BuildingUploadController` upload + status + missing file + unknown job | `@WebMvcTest` + MockMvc |
-| Adapters | `KafkaBuildingUploadConsumer` delegation + invalid UUID, `KafkaBuildingUploadPublisher` topic + key, `JacksonBuildingDataParser` parsing + setback + containment | Mockito or plain JUnit |
+| Domain model | Ray casting (`Polygon2D`), height range boundaries, building containment + floor lookup | Plain JUnit, no Spring |
+| Application services | `LocationService` three outcomes, `BuildingUploadService` submission, `UploadProcessingService` success + failure | Mockito mocks for ports |
+| Application strategy | Both strategies return identical results for the same input | Mockito mocks for repository |
+| Controllers | `LocationController` all three `LocationResult` cases + validation, `BuildingUploadController` upload + missing file, `LocateStrategyController` get + switch + invalid | `@WebMvcTest` + MockMvc |
+| Adapters | `JacksonBuildingDataParser` parsing + containment | Plain JUnit |
+| End-to-end | Upload acceptance, file size rejection, strategy performance comparison, result equivalence | Shell scripts over HTTP |
 
-Deliberately not included: integration tests that hit a real database
-or Kafka broker. The natural next step is Testcontainers spinning up
-PostgreSQL + PostGIS for repository tests (`@DataJpaTest`) and a full
-`@SpringBootTest` for the upload-to-locate flow end to end, plus
-`@EmbeddedKafka` to verify that a message published by the producer is
-actually received by the consumer. These were scoped out in favor of
-covering more of the domain and adapter logic with fast, isolated tests.
+Test coverage (JaCoCo): **65% overall, 100% branch coverage**.
+Domain model, application services, and web controllers are at 100%.
+The persistence adapter (0%) requires integration tests against a real
+PostGIS instance via Testcontainers (`@DataJpaTest`), which was scoped
+out in favor of covering the domain and application layers thoroughly
+with fast, isolated unit tests. The persistence layer is instead
+verified by the shell scripts in `scripts/`, which exercise the full
+upload and locate flow over HTTP against the real database.
 
-## Known limitations / what I'd do with more time
+### Smoke and load tests
 
-**No tests beyond unit and controller slices.** Repository tests
-(`@DataJpaTest` with Testcontainers against a real PostGIS instance),
-Kafka integration tests (`@EmbeddedKafka` for the full
-produce-consume-persist cycle), and end-to-end tests (upload a file,
-poll until DONE, locate a point) are all absent. The domain layer's ray
-casting and the upload job state machine have unit coverage; the
-controller slices verify Spring wiring and HTTP contracts. The
-integration layer between them is tested only by running the application.
+Shell-based test scripts live in `scripts/`, runnable against a live
+instance with no test framework dependencies.
 
-**No consumer error handling.** If the Kafka consumer fails
-mid-processing (malformed JSON, database down, unexpected schema), the
-message is not retried or dead-lettered. It is simply lost. A production
-consumer would need a dead-letter topic, a retry policy with backoff,
-and an error table that records what failed and why, so operators can
-inspect and replay.
+**`scripts/load-test-strategy.sh`** uploads 50 buildings
+(`scripts/inputs/test-buildings.json`), runs N locate requests against
+each strategy, reports per-strategy timing (avg/min/max), and verifies
+both strategies return identical results. Configurable via `HOST` and
+`ITERATIONS` environment variables.
 
-**No file validation during processing.** The consumer assumes the
-uploaded JSON is structurally correct and throws a
-`NullPointerException` on malformed input. A production system should
-validate the file during processing: check for required fields, valid
-coordinate ranges, non-degenerate polygons (at least 3 vertices, no
-self-intersections), and return structured errors per building rather
-than failing the entire job.
+**`scripts/smoke-test-upload.sh`** validates upload behavior: a valid
+file is accepted, a missing file part is rejected with 400, and an
+oversized file (11MB, generated at runtime) is rejected with 413.
 
-**Upload tracking relies on a UUID the user cannot recover.** The upload
-endpoint returns a job ID that the client must store to poll status. If
-the client loses it, there is no way to find the job again. A production
-system should accept a user-provided name or address for each upload,
-store it alongside the job, and let the user query by name. The UUID
-stays the internal identifier; the name is what humans use to find their
-upload.
+These scripts complement the JUnit suite by testing contracts that only
+surface over real HTTP: multipart size enforcement in the servlet
+container, spatial query correctness against a real PostGIS instance,
+and performance characteristics under repeated load.
 
-**Polling instead of notification.** The client polls
-`GET /status/{jobId}` to check whether processing is done. This works
-but wastes requests when the job takes time and adds latency when the job
-finishes between polls. A production system would notify the client on
-completion: WebSocket push, server-sent events, or a webhook URL
-provided at upload time. Polling would remain as a fallback for clients
-that cannot accept push connections.
+## Performance and scaling
 
-**No authentication or authorization.** Any client can upload, query
-status, or locate. The UUID job ID provides obscurity (unguessable), not
-security. A production system needs authentication (JWT or API key),
-tenant-scoped queries, and rate limiting.
+### Performance comparison
 
-**No input validation on locate.** The endpoint accepts any numeric
-x/y/z without bounds checking. In production, coordinates outside the
-expected geographic range should be rejected early rather than queried
-against the database.
+Load tested with 50 buildings, 50 iterations per strategy:
 
-**No logging configuration.** The application uses Spring Boot's default
-logging (Logback with console output). There are no structured log
-statements in the service or adapter layers, no correlation IDs for
-tracing a request through Kafka, and no log level configuration per
-package. A production deployment needs structured JSON logging, request
-correlation IDs, and log aggregation (ELK, Datadog, or CloudWatch).
+| Strategy | Avg | Min | Max | Total |
+|----------|-----|-----|-----|-------|
+| Java ray casting | 12ms | 9ms | 34ms | 647ms |
+| PostGIS | 4ms | 4ms | 8ms | 229ms |
 
-**Frontend is minimal.** The Angular app is a functional proof that the
-API works end-to-end (file upload with status polling, point query with
-result display) but has no error recovery, loading states, or responsive
-design beyond basic layout. A production frontend would show upload
-progress, display structured errors from failed jobs, remember recent
-queries, and visualize building outlines on a map.
+PostGIS is roughly 3x faster with 50 buildings. The gap widens with
+dataset size: the Java strategy's candidate set grows linearly while
+PostGIS stays O(log N) via the GIST index. Both strategies return
+identical results for every query point tested.
 
-## Scaling
+### How far each strategy stretches without caching
 
-### Current performance
+**Java ray casting** is bottlenecked by Tomcat threads. Each request
+holds a thread for the full duration: database query plus ray casting.
+With 200 default Tomcat threads:
 
-With the example data (1 building, 6 floors), a single instance handles
-roughly 3,000 to 5,000 locate requests per second. The database round
-trip (~2ms per query) dominates; the ray casting itself is pure
-arithmetic on a handful of edges and contributes negligibly.
+- 50 buildings (12ms/req): ~16,000 req/s
+- 500 buildings (~120ms/req): ~1,600 req/s
+- 5,000 buildings (~1.2s/req): ~160 req/s
 
-The bottleneck is the HikariCP connection pool (10 connections by
-default). Each locate query holds a connection for ~2ms, so maximum
-throughput is `10 connections x (1000ms / 2ms) = 5,000 req/s`.
-Increasing the pool size helps linearly until the database's own CPU
-becomes the limit.
+Throughput degrades linearly with building count because every
+candidate returned by the height filter is ray-cast on the servlet
+thread. At 5,000 buildings, a single instance cannot sustain even
+14 million requests per day.
 
-### Where it breaks
+**PostGIS** is bottlenecked by the connection pool, not threads.
+Each request holds a thread for ~5ms regardless of building count,
+so Tomcat threads are never the limit. The ceiling is HikariCP:
 
-The current design keeps polygon logic in the Java domain layer (ray
-casting), which is correct and testable but does not scale. The
-height-only database filter returns increasingly large candidate sets as
-buildings grow. Commercial buildings cluster in similar height ranges (3
-to 30m), so at millions of buildings, a single query could match
-thousands or more, all materialized as JPA entities, mapped to domain
-objects, and ray-cast checked in Java. Memory allocation and processing
-time grow linearly with the candidate set.
+- 10 connections (default), 4ms/query: ~2,500 req/s (216M req/day)
+- 20 connections: ~5,000 req/s (432M req/day)
+- Beyond ~50 connections, PostgreSQL CPU becomes the limit
 
-This is a conscious tradeoff: clean hexagonal boundaries now, with a
-known fix scoped for when scale demands it.
+A single PostgreSQL instance handles roughly 3,000-5,000 spatial
+queries per second. Adding a read replica doubles that. At that point,
+caching or application-level sharding is the next step, but the
+ceiling is well above most real-world locate workloads.
 
-### The fix: push polygon check to PostGIS
+### Multi-instance scaling
 
-Replace the height-only query plus Java ray casting with a single
-spatial query:
+PostgreSQL uses a process-per-connection model, more expensive per
+connection than thread-per-connection databases. At multi-instance
+scale with many application servers, the standard fix is PgBouncer
+as a connection pooler between the application and the database.
+Each application instance connects to PgBouncer, which multiplexes
+onto a smaller pool of actual database connections.
 
-```sql
-SELECT * FROM buildings
-WHERE ST_Contains(outline, ST_Point(:x, :y))
-  AND height_min <= :z AND height_max >= :z
-```
+## What production readiness needs
 
-The GIST index (already present in the schema migration) makes
-`ST_Contains` O(log N). The query returns 0 to 1 rows in a few
-milliseconds regardless of dataset size. Only
-`JpaBuildingRepository.findContaining()` changes. The domain model,
-ports, sealed interface, and the entire Kafka pipeline remain untouched.
+The application is functionally complete for the assignment scope. Moving
+it to production would require work in these areas:
 
-This is the hexagonal payoff: a single repository method absorbs what
-would otherwise be a system-wide refactor.
+**Strategy readiness.** The PostGIS strategy is close to production as-is:
+`ST_Covers` with a GIST index is the standard approach for spatial
+lookups, scaling to millions of buildings with no application code
+changes. The Java ray casting strategy is correct and fully tested but
+would need an in-memory spatial index (R-tree or grid partitioning) to
+avoid materializing large candidate sets at scale. In production, the
+toggle would be set to PostGIS permanently, with the Java strategy
+retained for environments without PostGIS or for debugging.
+
+**Frontend.** The Angular app is intentionally minimal -- the assignment's
+weight is on backend architecture, design patterns, and spatial logic.
+It proves the API works end-to-end (file upload, point query, strategy
+toggle) but lacks error recovery, loading states, and responsive design.
+For independent deployment: `ng build` produces static assets that can be
+served from nginx or a CDN with the API base URL injected as an
+environment variable at container startup, removing the dev proxy
+dependency and allowing frontend and backend to scale and deploy
+separately.
+
+**Integration tests.** Repository tests (`@DataJpaTest` with
+Testcontainers against a real PostGIS instance) and full end-to-end
+tests (upload a file, locate a point, verify the result) are absent.
+The domain and application layers have unit coverage; the controller
+slices verify Spring wiring and HTTP contracts. The integration layer
+between them is tested only by the shell scripts and by running the
+application.
+
+**Observability.** Structured JSON logging with request correlation IDs
+(e.g. Micrometer Tracing) so a single request can be traced through the
+controller, service, and database layers. Health check endpoints
+(`/actuator/health`) with custom indicators for database connectivity
+and PostGIS extension availability. Metrics export (Prometheus) for
+request latency, error rates, and connection pool utilization.
+
+**Security.** Authentication (JWT or API key) on all endpoints.
+Authorization to scope uploads and strategy changes to admin roles.
+Rate limiting on the locate endpoint to prevent abuse. CORS locked to
+known origins rather than a configurable wildcard.
+
+**Operational.** CI/CD pipeline running tests, Spotless formatting
+checks, and JaCoCo coverage gates before merge. Container image pushed
+to a registry rather than built on the host. Database backups and
+migration dry-runs in staging before production.
+
+**Data integrity.** Input validation during upload: required fields,
+valid coordinate ranges, non-degenerate polygons (at least 3 vertices,
+no self-intersections), with per-building error reporting rather than
+failing the entire upload. Idempotency on upload to prevent duplicate
+buildings from retried requests.

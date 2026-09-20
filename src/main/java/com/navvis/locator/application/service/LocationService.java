@@ -1,10 +1,12 @@
 package com.navvis.locator.application.service;
 
+import com.navvis.locator.application.strategy.BuildingLocatorResolver;
 import com.navvis.locator.domain.model.geometry.Building;
 import com.navvis.locator.domain.model.geometry.Floor;
 import com.navvis.locator.domain.port.in.LocatePointUseCase;
 import com.navvis.locator.domain.port.in.LocationResult;
-import com.navvis.locator.domain.port.out.BuildingRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -13,17 +15,21 @@ import java.util.Optional;
 @Service
 public class LocationService implements LocatePointUseCase {
 
-    private final BuildingRepository buildingRepository;
+    private static final Logger LOG = LoggerFactory.getLogger(LocationService.class);
+    private final BuildingLocatorResolver locatorResolver;
 
-    public LocationService(BuildingRepository buildingRepository) {
-        this.buildingRepository = buildingRepository;
+    public LocationService(BuildingLocatorResolver locatorResolver) {
+        this.locatorResolver = locatorResolver;
     }
 
     @Override
     public LocationResult locate(double x, double y, double z) {
-        // PostGIS does the heavy spatial filtering;
-        // what comes back already passed ST_Contains + height range
-        List<Building> candidates = buildingRepository.findContaining(x, y, z);
+        long start = System.nanoTime();
+        List<Building> candidates = locatorResolver.current().locate(x, y, z);
+        long durationMs = (System.nanoTime() - start) / 1_000_000;
+
+        LOG.info("locate [{} strategy] ({}, {}, {}) -> {} match(es) in {}ms",
+                locatorResolver.current().type(), x, y, z, candidates.size(), durationMs);
 
         if (candidates.isEmpty()) {
             return new LocationResult.NotFound();

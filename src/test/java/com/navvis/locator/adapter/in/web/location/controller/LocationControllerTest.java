@@ -1,5 +1,6 @@
 package com.navvis.locator.adapter.in.web.location.controller;
 
+import com.navvis.locator.adapter.in.web.location.mapper.LocationResponseMapper;
 import com.navvis.locator.domain.model.geometry.Building;
 import com.navvis.locator.domain.model.geometry.Floor;
 import com.navvis.locator.domain.model.geometry.HeightRange;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.restdocs.test.autoconfigure.AutoConfigureRestDocs;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -27,6 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(LocationController.class)
 @AutoConfigureRestDocs
+@Import(LocationResponseMapper.class)
 class LocationControllerTest {
 
     @Autowired

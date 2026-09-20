@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component, OnInit } from '@angular/core';
+import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ApiService } from '../../services/api';
 
@@ -10,36 +10,32 @@ import { ApiService } from '../../services/api';
   styleUrl: './strategy.css',
 })
 export class StrategyComponent implements OnInit {
-  current: 'JAVA' | 'POSTGIS' = 'JAVA';
-  switching = false;
+  // 1. Declare state using signals
+  current = signal<'JAVA' | 'POSTGIS'>('JAVA');
+  switching = signal<boolean>(false);
 
-  constructor(
-    private api: ApiService,
-    private cdr: ChangeDetectorRef,
-  ) {}
+  constructor(private api: ApiService) {}
 
   ngOnInit() {
     this.api.getStrategy().subscribe({
       next: (res) => {
-        this.current = res.strategy;
-        this.cdr.markForCheck();
+        // 2. Update signal value
+        this.current.set(res.strategy);
       },
     });
   }
 
   toggle() {
-    const next = this.current === 'JAVA' ? 'POSTGIS' : 'JAVA';
-    this.switching = true;
+    const next = this.current() === 'JAVA' ? 'POSTGIS' : 'JAVA';
+    this.switching.set(true);
 
     this.api.setStrategy(next).subscribe({
       next: (res) => {
-        this.current = res.strategy;
-        this.switching = false;
-        this.cdr.markForCheck();
+        this.current.set(res.strategy);
+        this.switching.set(false);
       },
       error: () => {
-        this.switching = false;
-        this.cdr.markForCheck();
+        this.switching.set(false);
       },
     });
   }

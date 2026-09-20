@@ -14,5 +14,7 @@ public interface BuildingRepository {
 
     void saveAll(List<Building> buildings);
 
-    List<Building> findContaining(double x, double y, double z);
+    List<Building> findByHeightRange(double z);
+
+    List<Building> findSpatialContaining(double x, double y, double z);
 }

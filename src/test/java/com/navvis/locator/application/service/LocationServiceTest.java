@@ -1,5 +1,9 @@
 package com.navvis.locator.application.service;
 
+import com.navvis.locator.application.strategy.BuildingLocator;
+import com.navvis.locator.application.strategy.BuildingLocatorResolver;
+import com.navvis.locator.application.strategy.JavaRayCastingLocator;
+import com.navvis.locator.application.strategy.PostgisLocator;
 import com.navvis.locator.domain.model.geometry.Building;
 import com.navvis.locator.domain.model.geometry.Floor;
 import com.navvis.locator.domain.model.geometry.HeightRange;
@@ -24,6 +28,12 @@ import static org.mockito.Mockito.when;
 class LocationServiceTest {
 
     @Mock
+    private BuildingLocatorResolver locatorResolver;
+
+    @Mock
+    private BuildingLocator buildingLocator;
+
+    @Mock
     private BuildingRepository buildingRepository;
 
     @InjectMocks
@@ -45,7 +55,8 @@ class LocationServiceTest {
     @Test
     @DisplayName("returns NotFound when no buildings match")
     void notFound() {
-        when(buildingRepository.findContaining(5, 5, 5)).thenReturn(List.of());
+        when(locatorResolver.current()).thenReturn(buildingLocator);
+        when(buildingLocator.locate(5, 5, 5)).thenReturn(List.of());
 
         LocationResult result = locationService.locate(5, 5, 5);
 
@@ -55,7 +66,8 @@ class LocationServiceTest {
     @Test
     @DisplayName("returns Located when point is inside a building and on a floor")
     void located() {
-        when(buildingRepository.findContaining(10, 10, 1)).thenReturn(List.of(BUILDING));
+        when(locatorResolver.current()).thenReturn(buildingLocator);
+        when(buildingLocator.locate(10, 10, 1)).thenReturn(List.of(BUILDING));
 
         LocationResult result = locationService.locate(10, 10, 1);
 
@@ -68,13 +80,28 @@ class LocationServiceTest {
     @Test
     @DisplayName("returns BuildingOnly when point is inside building but not on any floor")
     void buildingOnly() {
-        // z=7 is within the building height (0-10) but above the ground floor (0-3)
-        when(buildingRepository.findContaining(10, 10, 7)).thenReturn(List.of(BUILDING));
+        when(locatorResolver.current()).thenReturn(buildingLocator);
+        when(buildingLocator.locate(10, 10, 7)).thenReturn(List.of(BUILDING));
 
         LocationResult result = locationService.locate(10, 10, 7);
 
         assertInstanceOf(LocationResult.BuildingOnly.class, result);
         LocationResult.BuildingOnly buildingOnly = (LocationResult.BuildingOnly) result;
         assertEquals("Office", buildingOnly.building().name());
+    }
+
+    @Test
+    @DisplayName("both locate strategies return the same result for the same point")
+    void bothStrategiesAgree() {
+        when(buildingRepository.findByHeightRange(1)).thenReturn(List.of(BUILDING));
+        when(buildingRepository.findSpatialContaining(10, 10, 1)).thenReturn(List.of(BUILDING));
+
+        JavaRayCastingLocator javaLocator = new JavaRayCastingLocator(buildingRepository);
+        PostgisLocator postgisLocator = new PostgisLocator(buildingRepository);
+
+        List<Building> javaResult = javaLocator.locate(10, 10, 1);
+        List<Building> postgisResult = postgisLocator.locate(10, 10, 1);
+
+        assertEquals(javaResult, postgisResult);
     }
 }

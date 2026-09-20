@@ -16,6 +16,7 @@ spring:
         jdbc:
           dialect: org.hibernate.spatial.dialect.postgis.PostgisPG10Dialect
           time_zone: UTC
+          batch_size: 100
 
   flyway:
     enabled: true
